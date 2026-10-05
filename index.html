@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bytarith — Secure Short-Key Text Encryption</title>
+  <meta name="description" content="Bytarith is a private, browser-based encoder and decoder for secure short-key text encryption. Encrypt text, numbers, symbols, and Unicode into compact BY1 strings.">
+  <meta name="keywords" content="Bytarith, Bytarith cipher, Bytarith encoder, Bytarith decoder, text encryption, short key encryption, browser encryption">
+  <meta name="theme-color" content="#09090b">
+  <meta property="og:title" content="Bytarith — Secure Short-Key Text Encryption">
+  <meta property="og:description" content="Encrypt text into portable BY1 strings. Private by design: your message and key stay in your browser.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://bytarith.vercel.app/">
+  <link rel="canonical" href="https://bytarith.vercel.app/">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/site.webmanifest">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="Bytarith home">
+      <span class="brand-mark" aria-hidden="true">B</span>
+      <span>Bytarith</span>
+    </a>
+    <nav class="top-nav" aria-label="Primary">
+      <a href="#security">Security</a>
+      <a href="#format">Format</a>
+      <a class="github-link" href="https://github.com/Aspheral/Bytarith" rel="noopener noreferrer">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-copy">
+        <div class="eyebrow"><span class="live-dot"></span> Local-first cryptography</div>
+        <h1>Turn anything into a <span>Bytarith string.</span></h1>
+        <p class="hero-text">Encrypt text, numbers, symbols, and Unicode with a short key. Your plaintext and key never leave your browser.</p>
+        <div class="trust-row">
+          <span> AES-256-GCM</span>
+          <span> PBKDF2-SHA-256</span>
+          <span> Zero network calls</span>
+        </div>
+      </div>
+
+      <div class="protocol-visual" aria-hidden="true">
+        <div class="protocol-chip">BY1</div>
+        <div class="protocol-line">B7S2KwXnT5x3qL9...</div>
+        <div class="protocol-meta">
+          <span>salt</span><span>iv</span><span>ciphertext</span><span>tag</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="crypto-shell" aria-label="Bytarith encoder and decoder">
+      <div class="mode-tabs" role="tablist" aria-label="Mode">
+        <button class="mode-tab active" id="encryptTab" role="tab" aria-selected="true" aria-controls="encryptPanel">Encrypt</button>
+        <button class="mode-tab" id="decryptTab" role="tab" aria-selected="false" aria-controls="decryptPanel">Decrypt</button>
+        <div class="local-badge"><span></span> Runs locally</div>
+      </div>
+
+      <div class="panel active" id="encryptPanel" role="tabpanel" aria-labelledby="encryptTab">
+        <div class="field-group">
+          <div class="field-head">
+            <label for="plainInput">Message</label>
+            <span id="plainCount">0 bytes</span>
+          </div>
+          <textarea id="plainInput" rows="7" placeholder="Type or paste anything here…"></textarea>
+        </div>
+
+        <div class="key-row">
+          <div class="field-group key-field">
+            <div class="field-head">
+              <label for="encryptKey">Bytarith key</label>
+              <span id="keyStrength">Use a generated key</span>
+            </div>
+            <div class="input-action">
+              <input id="encryptKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="Enter a key or generate one">
+              <button class="ghost-button key-visibility" type="button" data-target="encryptKey">Show</button>
+            </div>
+          </div>
+          <button class="secondary-button" id="generateKey" type="button">Generate secure key</button>
+        </div>
+
+        <button class="primary-button" id="encryptButton" type="button">
+          <span>Encrypt with Bytarith</span>
+          <span aria-hidden="true">→</span>
+        </button>
+
+        <div class="result-block hidden" id="encryptResult">
+          <div class="field-head">
+            <label for="cipherOutput">Bytarith string</label>
+            <span id="cipherSize"></span>
+          </div>
+          <textarea id="cipherOutput" rows="6" readonly spellcheck="false"></textarea>
+          <div class="result-actions">
+            <button class="secondary-button" id="copyCipher" type="button">Copy string</button>
+            <span class="result-note">Share the BY1 string and key separately.</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" id="decryptPanel" role="tabpanel" aria-labelledby="decryptTab" hidden>
+        <div class="field-group">
+          <div class="field-head">
+            <label for="cipherInput">Bytarith string</label>
+            <span>BY1 format</span>
+          </div>
+          <textarea id="cipherInput" rows="7" spellcheck="false" placeholder="BY1.…"></textarea>
+        </div>
+
+        <div class="field-group">
+          <div class="field-head">
+            <label for="decryptKey">Bytarith key</label>
+            <span>Must match exactly</span>
+          </div>
+          <div class="input-action">
+            <input id="decryptKey" type="password" autocomplete="current-password" spellcheck="false" placeholder="Enter the matching key">
+            <button class="ghost-button key-visibility" type="button" data-target="decryptKey">Show</button>
+          </div>
+        </div>
+
+        <button class="primary-button" id="decryptButton" type="button">
+          <span>Decrypt string</span>
+          <span aria-hidden="true">→</span>
+        </button>
+
+        <div class="result-block hidden" id="decryptResult">
+          <div class="field-head">
+            <label for="plainOutput">Decrypted message</label>
+            <span>Authenticated</span>
+          </div>
+          <textarea id="plainOutput" rows="6" readonly></textarea>
+          <div class="result-actions">
+            <button class="secondary-button" id="copyPlain" type="button">Copy message</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="status-line" id="statusLine" role="status" aria-live="polite"></div>
+    </section>
+
+    <section class="info-grid" id="security">
+      <article class="info-card feature-card">
+        <p class="card-kicker">Security model</p>
+        <h2>Strong primitives. Tiny footprint.</h2>
+        <p>Bytarith v1 uses your browser's native Web Crypto API. Every encryption gets a fresh random salt and IV, and AES-GCM authenticates the result so tampering or an incorrect key is rejected.</p>
+        <div class="security-list">
+          <div><b>256-bit</b><span>AES key</span></div>
+          <div><b>600K</b><span>PBKDF2 rounds</span></div>
+          <div><b>128-bit</b><span>random salt</span></div>
+          <div><b>96-bit</b><span>unique IV</span></div>
+        </div>
+      </article>
+
+      <article class="info-card">
+        <div class="card-icon">01</div>
+        <h3>Local by design</h3>
+        <p>No encryption API, account, database, analytics pipeline, or server-side key handling. The cryptographic work happens in this tab.</p>
+      </article>
+
+      <article class="info-card">
+        <div class="card-icon">02</div>
+        <h3>Portable output</h3>
+        <p>Every result begins with <code>BY1.</code>, followed by a URL-safe encoded payload containing only the data required for decryption.</p>
+      </article>
+
+      <article class="info-card">
+        <div class="card-icon">03</div>
+        <h3>Random short keys</h3>
+        <p>The generator creates 16-character keys from a 32-symbol alphabet, providing 80 bits of random key entropy while staying practical to share.</p>
+      </article>
+    </section>
+
+    <section class="format-section" id="format">
+      <div>
+        <p class="card-kicker">The BY1 envelope</p>
+        <h2>A recognizable format with room to evolve.</h2>
+        <p>BY1 stores the KDF work factor, random salt, random IV, and authenticated ciphertext in one compact payload. The secret key is never embedded in the string.</p>
+      </div>
+      <div class="format-code" aria-label="Bytarith BY1 format">
+        <div><span class="format-prefix">BY1.</span><span class="format-data">Ab3k9xF8pQ2n…</span></div>
+        <div class="format-labels">
+          <span>version</span>
+          <span>encrypted payload</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="notice">
+      <div class="notice-icon">!</div>
+      <div>
+        <h3>Use generated keys for real privacy.</h3>
+        <p>A strong cipher cannot rescue a predictable password. Bytarith slows password guessing with PBKDF2, but a randomly generated key is still substantially safer than a short word, date, PIN, or reused password.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="brand footer-brand"><span class="brand-mark">B</span><span>Bytarith</span></div>
+    <p>Private short-key encryption for text. Built by Aspheral.</p>
+    <p class="footer-small">BY1 · AES-256-GCM · PBKDF2-HMAC-SHA-256</p>
+  </footer>
+</body>
+</html>
