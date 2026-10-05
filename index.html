@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Bytarith — Secure Short-Key Text Encryption</title>
-  <meta name="description" content="Bytarith is a private, browser-based encoder and decoder for secure short-key text encryption. Encrypt text, numbers, symbols, and Unicode into compact BY1 strings.">
-  <meta name="keywords" content="Bytarith, Bytarith cipher, Bytarith encoder, Bytarith decoder, text encryption, short key encryption, browser encryption">
+  <title>Bytarith — Encrypt, Decrypt & Transform Text</title>
+  <meta name="description" content="Bytarith is a private browser tool for encryption, decryption, and reversible text transforms. Create secure BY1 ciphertext or custom visible text with compact BT1 transform keys.">
+  <meta name="keywords" content="Bytarith, Bytarith cipher, Bytarith transform, Bytarith encoder, Bytarith decoder, text encryption, text transform, short key encryption, browser encryption">
   <meta name="theme-color" content="#09090b">
   <meta property="og:title" content="Bytarith — Secure Short-Key Text Encryption">
   <meta property="og:description" content="Encrypt text into portable BY1 strings. Private by design: your message and key stay in your browser.">
@@ -43,6 +43,7 @@
           <span> AES-256-GCM</span>
           <span> PBKDF2-SHA-256</span>
           <span> Zero network calls</span>
+          <span> BT1 Transform</span>
         </div>
       </div>
 
@@ -59,6 +60,7 @@
       <div class="mode-tabs" role="tablist" aria-label="Mode">
         <button class="mode-tab active" id="encryptTab" role="tab" aria-selected="true" aria-controls="encryptPanel">Encrypt</button>
         <button class="mode-tab" id="decryptTab" role="tab" aria-selected="false" aria-controls="decryptPanel">Decrypt</button>
+        <button class="mode-tab" id="transformTab" role="tab" aria-selected="false" aria-controls="transformPanel">Transform</button>
         <div class="local-badge"><span></span> Runs locally</div>
       </div>
 
@@ -140,6 +142,99 @@
         </div>
       </div>
 
+
+      <div class="panel" id="transformPanel" role="tabpanel" aria-labelledby="transformTab" hidden>
+        <div class="transform-intro">
+          <div>
+            <p class="card-kicker">BT1 Transform</p>
+            <h2>Choose what people see.</h2>
+            <p>Write the real message and the exact visible text you want to share. Bytarith tests multiple reversible encodings and keeps the shortest transform key.</p>
+          </div>
+          <div class="transform-warning">Transform is reversible encoding, not encryption. The visible text and BT1 key together recover the original.</div>
+        </div>
+
+        <div class="sub-tabs" role="tablist" aria-label="Transform action">
+          <button class="sub-tab active" id="transformCreateTab" type="button">Create</button>
+          <button class="sub-tab" id="transformRestoreTab" type="button">Restore</button>
+        </div>
+
+        <div id="transformCreate">
+          <div class="transform-grid">
+            <div class="field-group">
+              <div class="field-head">
+                <label for="transformOriginal">Original message</label>
+                <span id="transformOriginalCount">0 bytes</span>
+              </div>
+              <textarea id="transformOriginal" rows="6" placeholder="The real message you want Bytarith to recover…"></textarea>
+            </div>
+            <div class="field-group">
+              <div class="field-head">
+                <label for="transformCover">Visible text</label>
+                <span id="transformCoverCount">0 bytes</span>
+              </div>
+              <textarea id="transformCover" rows="6" placeholder="Write exactly what you want everyone else to see…"></textarea>
+            </div>
+          </div>
+
+          <button class="primary-button" id="transformButton" type="button">
+            <span>Generate smallest transform key</span>
+            <span aria-hidden="true">→</span>
+          </button>
+
+          <div class="result-block hidden" id="transformResult">
+            <div class="transform-stats">
+              <div><b id="transformMethod">—</b><span>Best method</span></div>
+              <div><b id="transformKeyChars">0</b><span>Key characters</span></div>
+              <div><b id="transformEfficiency">0%</b><span>Key vs original</span></div>
+            </div>
+            <div class="field-head">
+              <label for="transformKeyOutput">BT1 transform key</label>
+              <span>Requires the exact visible text</span>
+            </div>
+            <textarea id="transformKeyOutput" rows="5" readonly spellcheck="false"></textarea>
+            <div class="result-actions">
+              <button class="secondary-button" id="copyTransformKey" type="button">Copy transform key</button>
+              <button class="secondary-button" id="copyTransformPair" type="button">Copy visible text + key</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="transformRestore" hidden>
+          <div class="transform-grid">
+            <div class="field-group">
+              <div class="field-head">
+                <label for="restoreCover">Visible text</label>
+                <span>Must match exactly</span>
+              </div>
+              <textarea id="restoreCover" rows="6" placeholder="Paste the visible text…"></textarea>
+            </div>
+            <div class="field-group">
+              <div class="field-head">
+                <label for="restoreKey">BT1 transform key</label>
+                <span>BT1 format</span>
+              </div>
+              <textarea id="restoreKey" rows="6" spellcheck="false" placeholder="BT1.…"></textarea>
+            </div>
+          </div>
+
+          <button class="primary-button" id="restoreTransformButton" type="button">
+            <span>Restore original message</span>
+            <span aria-hidden="true">→</span>
+          </button>
+
+          <div class="result-block hidden" id="restoreTransformResult">
+            <div class="field-head">
+              <label for="restoreOutput">Original message</label>
+              <span>Transform verified</span>
+            </div>
+            <textarea id="restoreOutput" rows="6" readonly></textarea>
+            <div class="result-actions">
+              <button class="secondary-button" id="copyRestoreOutput" type="button">Copy original</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="status-line" id="statusLine" role="status" aria-live="polite"></div>
     </section>
 
@@ -179,10 +274,10 @@
       <div>
         <p class="card-kicker">The BY1 envelope</p>
         <h2>A recognizable format with room to evolve.</h2>
-        <p>BY1 stores the KDF work factor, random salt, random IV, and authenticated ciphertext in one compact payload. The secret key is never embedded in the string.</p>
+        <p><strong>BY1</strong> stores the KDF work factor, random salt, random IV, and authenticated ciphertext. <strong>BT1</strong> stores the smallest reversible recipe Bytarith finds for mapping your chosen visible text back to the original.</p>
       </div>
       <div class="format-code" aria-label="Bytarith BY1 format">
-        <div><span class="format-prefix">BY1.</span><span class="format-data">Ab3k9xF8pQ2n…</span></div>
+        <div><span class="format-prefix">BY1.</span><span class="format-data">Ab3k9xF8pQ2n…</span><br><span class="format-prefix">BT1.</span><span class="format-data">Aq7mP2dK…</span></div>
         <div class="format-labels">
           <span>version</span>
           <span>encrypted payload</span>
@@ -202,7 +297,7 @@
   <footer>
     <div class="brand footer-brand"><span class="brand-mark">B</span><span>Bytarith</span></div>
     <p>Private short-key encryption for text. Built by Aspheral.</p>
-    <p class="footer-small">BY1 · AES-256-GCM · PBKDF2-HMAC-SHA-256</p>
+    <p class="footer-small">BY1 · AES-256-GCM · BT1 Transform</p>
   </footer>
 </body>
 </html>

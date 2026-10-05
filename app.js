@@ -1,14 +1,17 @@
 "use strict";
 
 const PREFIX = "BY1.";
+const TRANSFORM_PREFIX = "BT1.";
 const ITERATIONS = 600000;
 const SALT_BYTES = 16;
 const IV_BYTES = 12;
 const MIN_PAYLOAD_BYTES = 4 + SALT_BYTES + IV_BYTES + 16;
 const KEY_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const MAX_TRANSFORM_BYTES = 1000000;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const protocolBytes = encoder.encode("Bytarith/BY1/AES-256-GCM/PBKDF2-SHA256");
+const transformMaskLabel = encoder.encode("Bytarith/BT1/mask");
 
 const $ = (id) => document.getElementById(id);
 
@@ -49,18 +52,112 @@ function bytesToBase64Url(bytes) {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-function base64UrlToBytes(value) {
-  if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error("The BY1 payload contains invalid characters.");
+function base64UrlToBytes(value, label) {
+  const name = label || "payload";
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error("The " + name + " contains invalid characters.");
   const padded = value.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((value.length + 3) % 4);
   let binary;
   try {
     binary = atob(padded);
   } catch {
-    throw new Error("The BY1 payload is not valid Base64URL data.");
+    throw new Error("The " + name + " is not valid Base64URL data.");
   }
   const out = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
   return out;
+}
+
+function bytesEqual(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+function encodeVarint(value) {
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error("Invalid transform integer.");
+  const out = [];
+  do {
+    let byte = value & 0x7f;
+    value = Math.floor(value / 128);
+    if (value) byte |= 0x80;
+    out.push(byte);
+  } while (value);
+  return new Uint8Array(out);
+}
+
+function readVarint(bytes, state) {
+  let value = 0;
+  let multiplier = 1;
+  for (let count = 0; count < 8; count++) {
+    if (state.offset >= bytes.length) throw new Error("The BT1 key is truncated.");
+    const byte = bytes[state.offset++];
+    value += (byte & 0x7f) * multiplier;
+    if (!(byte & 0x80)) return value;
+    multiplier *= 128;
+  }
+  throw new Error("The BT1 key contains an invalid integer.");
+}
+
+async function digest16(bytes) {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return digest.slice(0, 2);
+}
+
+async function xorWithCoverStream(bytes, coverBytes) {
+  const out = new Uint8Array(bytes.length);
+  let offset = 0;
+  let counter = 0;
+  while (offset < bytes.length) {
+    const seed = concatBytes(transformMaskLabel, coverBytes, uint32Bytes(counter++));
+    const block = new Uint8Array(await crypto.subtle.digest("SHA-256", seed));
+    const take = Math.min(block.length, bytes.length - offset);
+    for (let i = 0; i < take; i++) out[offset + i] = bytes[offset + i] ^ block[i];
+    offset += take;
+  }
+  return out;
+}
+
+async function streamToBytes(readable) {
+  const reader = readable.getReader();
+  const chunks = [];
+  let length = 0;
+  while (true) {
+    const result = await reader.read();
+    if (result.done) break;
+    const chunk = new Uint8Array(result.value);
+    chunks.push(chunk);
+    length += chunk.length;
+    if (length > MAX_TRANSFORM_BYTES * 2) throw new Error("Compressed transform data is unexpectedly large.");
+  }
+  const out = new Uint8Array(length);
+  let offset = 0;
+  chunks.forEach((chunk) => {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  });
+  return out;
+}
+
+async function compressDeflate(bytes) {
+  if (!("CompressionStream" in window)) return null;
+  try {
+    const stream = new CompressionStream("deflate");
+    const writer = stream.writable.getWriter();
+    await writer.write(bytes);
+    await writer.close();
+    return await streamToBytes(stream.readable);
+  } catch {
+    return null;
+  }
+}
+
+async function decompressDeflate(bytes) {
+  if (!("DecompressionStream" in window)) throw new Error("This browser cannot restore compressed BT1 keys.");
+  const stream = new DecompressionStream("deflate");
+  const writer = stream.writable.getWriter();
+  await writer.write(bytes);
+  await writer.close();
+  return await streamToBytes(stream.readable);
 }
 
 async function deriveAesKey(secret, salt, iterations) {
@@ -73,12 +170,7 @@ async function deriveAesKey(secret, salt, iterations) {
   );
 
   return crypto.subtle.deriveKey(
-    {
-      name: "PBKDF2",
-      salt,
-      iterations,
-      hash: "SHA-256"
-    },
+    { name: "PBKDF2", salt, iterations, hash: "SHA-256" },
     material,
     { name: "AES-GCM", length: 256 },
     false,
@@ -101,21 +193,19 @@ function generatedKeyLike(value) {
 function updateKeyStrength() {
   const value = $("encryptKey").value;
   const label = $("keyStrength");
-  if (!value) {
-    label.textContent = "Use a generated key";
-  } else if (generatedKeyLike(value)) {
-    label.textContent = "80-bit generated key";
-  } else if (value.length >= 16) {
-    label.textContent = "Long custom key";
-  } else if (value.length >= 10) {
-    label.textContent = "Custom key";
-  } else {
-    label.textContent = "Weak custom key";
-  }
+  if (!value) label.textContent = "Use a generated key";
+  else if (generatedKeyLike(value)) label.textContent = "80-bit generated key";
+  else if (value.length >= 16) label.textContent = "Long custom key";
+  else if (value.length >= 10) label.textContent = "Custom key";
+  else if (value.length >= 6) label.textContent = "Weak custom key";
+  else if (value.length >= 2) label.textContent = "Very weak · obfuscation only";
+  else label.textContent = "Minimum 2 characters";
 }
 
-function updateByteCount() {
+function updateByteCounts() {
   $("plainCount").textContent = encoder.encode($("plainInput").value).length + " bytes";
+  $("transformOriginalCount").textContent = encoder.encode($("transformOriginal").value).length + " bytes";
+  $("transformCoverCount").textContent = encoder.encode($("transformCover").value).length + " bytes";
 }
 
 async function encryptMessage() {
@@ -123,7 +213,7 @@ async function encryptMessage() {
   const secret = $("encryptKey").value;
 
   if (!plaintext.length) throw new Error("Enter a message to encrypt.");
-  if (secret.length < 8) throw new Error("Use a key with at least 8 characters. A generated key is recommended.");
+  if (secret.length < 2) throw new Error("Use a key with at least 2 characters. Short keys are weak; a generated key is recommended.");
   if (!window.crypto || !crypto.subtle) throw new Error("Web Crypto is unavailable in this browser.");
 
   const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
@@ -133,26 +223,20 @@ async function encryptMessage() {
   const additionalData = concatBytes(protocolBytes, iterationBytes, salt, iv);
 
   const encrypted = new Uint8Array(await crypto.subtle.encrypt(
-    {
-      name: "AES-GCM",
-      iv,
-      additionalData,
-      tagLength: 128
-    },
+    { name: "AES-GCM", iv, additionalData, tagLength: 128 },
     key,
     encoder.encode(plaintext)
   ));
 
-  const packed = concatBytes(iterationBytes, salt, iv, encrypted);
-  return PREFIX + bytesToBase64Url(packed);
+  return PREFIX + bytesToBase64Url(concatBytes(iterationBytes, salt, iv, encrypted));
 }
 
 async function decryptMessage(serialized, secret) {
   const input = serialized.trim();
   if (!input.startsWith(PREFIX)) throw new Error("This is not a BY1 Bytarith string.");
-  if (secret.length < 8) throw new Error("Enter the matching Bytarith key.");
+  if (secret.length < 2) throw new Error("Enter the matching Bytarith key.");
 
-  const packed = base64UrlToBytes(input.slice(PREFIX.length));
+  const packed = base64UrlToBytes(input.slice(PREFIX.length), "BY1 payload");
   if (packed.length < MIN_PAYLOAD_BYTES) throw new Error("The BY1 string is incomplete or damaged.");
 
   const iterationBytes = packed.slice(0, 4);
@@ -168,12 +252,7 @@ async function decryptMessage(serialized, secret) {
   let decrypted;
   try {
     decrypted = await crypto.subtle.decrypt(
-      {
-        name: "AES-GCM",
-        iv,
-        additionalData,
-        tagLength: 128
-      },
+      { name: "AES-GCM", iv, additionalData, tagLength: 128 },
       key,
       ciphertext
     );
@@ -185,6 +264,148 @@ async function decryptMessage(serialized, secret) {
     return decoder.decode(decrypted);
   } catch {
     throw new Error("The decrypted data is not valid UTF-8 text.");
+  }
+}
+
+function commonPrefixLength(a, b) {
+  const max = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < max && a[i] === b[i]) i++;
+  return i;
+}
+
+function commonSuffixLength(a, b, prefix) {
+  const max = Math.min(a.length, b.length) - prefix;
+  let i = 0;
+  while (i < max && a[a.length - 1 - i] === b[b.length - 1 - i]) i++;
+  return i;
+}
+
+function buildPatchPayload(original, cover) {
+  const prefix = commonPrefixLength(original, cover);
+  const suffix = commonSuffixLength(original, cover, prefix);
+  const middle = original.slice(prefix, original.length - suffix);
+  return concatBytes(encodeVarint(prefix), encodeVarint(suffix), middle);
+}
+
+function restorePatchPayload(payload, cover) {
+  const state = { offset: 0 };
+  const prefix = readVarint(payload, state);
+  const suffix = readVarint(payload, state);
+  if (prefix + suffix > cover.length) throw new Error("The visible text does not match this BT1 key.");
+  const middle = payload.slice(state.offset);
+  return concatBytes(cover.slice(0, prefix), middle, cover.slice(cover.length - suffix));
+}
+
+function buildSparsePayload(original, cover) {
+  if (original.length !== cover.length) return null;
+  const parts = [];
+  let changes = 0;
+  for (let i = 0; i < original.length; i++) if (original[i] !== cover[i]) changes++;
+  parts.push(encodeVarint(changes));
+  let previous = 0;
+  for (let i = 0; i < original.length; i++) {
+    if (original[i] === cover[i]) continue;
+    parts.push(encodeVarint(i - previous), new Uint8Array([original[i]]));
+    previous = i;
+  }
+  return concatBytes.apply(null, parts);
+}
+
+function restoreSparsePayload(payload, cover) {
+  const state = { offset: 0 };
+  const count = readVarint(payload, state);
+  const out = cover.slice();
+  let position = 0;
+  for (let i = 0; i < count; i++) {
+    position += readVarint(payload, state);
+    if (position >= out.length || state.offset >= payload.length) throw new Error("The BT1 sparse recipe is damaged.");
+    out[position] = payload[state.offset++];
+  }
+  if (state.offset !== payload.length) throw new Error("The BT1 sparse recipe contains extra data.");
+  return out;
+}
+
+async function makeTransformCandidate(codec, method, payload, coverBytes, coverHash, originalHash) {
+  const masked = await xorWithCoverStream(payload, coverBytes);
+  const binary = concatBytes(new Uint8Array([codec]), coverHash, originalHash, masked);
+  return { codec, method, binary, key: TRANSFORM_PREFIX + bytesToBase64Url(binary) };
+}
+
+async function createTransform(originalText, coverText) {
+  const original = encoder.encode(originalText);
+  const cover = encoder.encode(coverText);
+  if (!original.length) throw new Error("Enter an original message.");
+  if (!cover.length) throw new Error("Enter the visible text you want people to see.");
+  if (original.length > MAX_TRANSFORM_BYTES || cover.length > MAX_TRANSFORM_BYTES) {
+    throw new Error("Transform currently supports up to 1 MB per text field.");
+  }
+
+  const coverHash = await digest16(cover);
+  const originalHash = await digest16(original);
+  const candidates = [];
+
+  candidates.push(await makeTransformCandidate(0, "Masked raw", original, cover, coverHash, originalHash));
+
+  const patchPayload = buildPatchPayload(original, cover);
+  candidates.push(await makeTransformCandidate(1, "Prefix/suffix patch", patchPayload, cover, coverHash, originalHash));
+
+  const sparsePayload = buildSparsePayload(original, cover);
+  if (sparsePayload) {
+    candidates.push(await makeTransformCandidate(2, "Sparse byte edits", sparsePayload, cover, coverHash, originalHash));
+  }
+
+  const compressedOriginal = await compressDeflate(original);
+  if (compressedOriginal) {
+    candidates.push(await makeTransformCandidate(3, "Deflate", compressedOriginal, cover, coverHash, originalHash));
+  }
+
+  const compressedPatch = await compressDeflate(patchPayload);
+  if (compressedPatch) {
+    candidates.push(await makeTransformCandidate(4, "Compressed patch", compressedPatch, cover, coverHash, originalHash));
+  }
+
+  candidates.sort((a, b) => a.key.length - b.key.length || a.binary.length - b.binary.length);
+  const best = candidates[0];
+  return {
+    key: best.key,
+    method: best.method,
+    originalBytes: original.length,
+    keyChars: best.key.length
+  };
+}
+
+async function restoreTransform(coverText, serialized) {
+  const input = serialized.trim();
+  if (!input.startsWith(TRANSFORM_PREFIX)) throw new Error("This is not a BT1 transform key.");
+  const cover = encoder.encode(coverText);
+  if (!cover.length) throw new Error("Enter the exact visible text used to create the transform.");
+
+  const binary = base64UrlToBytes(input.slice(TRANSFORM_PREFIX.length), "BT1 payload");
+  if (binary.length < 5) throw new Error("The BT1 key is incomplete.");
+  const codec = binary[0];
+  const expectedCoverHash = binary.slice(1, 3);
+  const expectedOriginalHash = binary.slice(3, 5);
+  const actualCoverHash = await digest16(cover);
+  if (!bytesEqual(expectedCoverHash, actualCoverHash)) throw new Error("Visible text mismatch. BT1 keys are tied to the exact visible text.");
+
+  const payload = await xorWithCoverStream(binary.slice(5), cover);
+  let original;
+  if (codec === 0) original = payload;
+  else if (codec === 1) original = restorePatchPayload(payload, cover);
+  else if (codec === 2) original = restoreSparsePayload(payload, cover);
+  else if (codec === 3) original = await decompressDeflate(payload);
+  else if (codec === 4) original = restorePatchPayload(await decompressDeflate(payload), cover);
+  else throw new Error("Unsupported BT1 transform method.");
+
+  if (original.length > MAX_TRANSFORM_BYTES) throw new Error("The restored message exceeds the BT1 size limit.");
+  const actualOriginalHash = await digest16(original);
+  if (!bytesEqual(expectedOriginalHash, actualOriginalHash)) throw new Error("The BT1 key is damaged or does not match this visible text.");
+
+  try {
+    return decoder.decode(original);
+  } catch {
+    throw new Error("The restored BT1 data is not valid UTF-8 text.");
   }
 }
 
@@ -210,21 +431,36 @@ async function copyText(value, successMessage) {
 }
 
 function switchMode(mode) {
-  const encrypting = mode === "encrypt";
-  $("encryptTab").classList.toggle("active", encrypting);
-  $("decryptTab").classList.toggle("active", !encrypting);
-  $("encryptTab").setAttribute("aria-selected", String(encrypting));
-  $("decryptTab").setAttribute("aria-selected", String(!encrypting));
-  $("encryptPanel").hidden = !encrypting;
-  $("decryptPanel").hidden = encrypting;
-  $("encryptPanel").classList.toggle("active", encrypting);
-  $("decryptPanel").classList.toggle("active", !encrypting);
+  ["encrypt", "decrypt", "transform"].forEach((name) => {
+    const active = name === mode;
+    const tab = $(name + "Tab");
+    const panel = $(name + "Panel");
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", String(active));
+    panel.hidden = !active;
+    panel.classList.toggle("active", active);
+  });
+  setStatus("");
+}
+
+function switchTransformAction(action) {
+  const creating = action === "create";
+  $("transformCreateTab").classList.toggle("active", creating);
+  $("transformRestoreTab").classList.toggle("active", !creating);
+  $("transformCreate").hidden = !creating;
+  $("transformRestore").hidden = creating;
   setStatus("");
 }
 
 $("encryptTab").addEventListener("click", () => switchMode("encrypt"));
 $("decryptTab").addEventListener("click", () => switchMode("decrypt"));
-$("plainInput").addEventListener("input", updateByteCount);
+$("transformTab").addEventListener("click", () => switchMode("transform"));
+$("transformCreateTab").addEventListener("click", () => switchTransformAction("create"));
+$("transformRestoreTab").addEventListener("click", () => switchTransformAction("restore"));
+
+$("plainInput").addEventListener("input", updateByteCounts);
+$("transformOriginal").addEventListener("input", updateByteCounts);
+$("transformCover").addEventListener("input", updateByteCounts);
 $("encryptKey").addEventListener("input", updateKeyStrength);
 
 $("generateKey").addEventListener("click", () => {
@@ -254,7 +490,8 @@ $("encryptButton").addEventListener("click", async () => {
     $("cipherOutput").value = result;
     $("cipherSize").textContent = result.length + " characters";
     $("encryptResult").classList.remove("hidden");
-    setStatus("Encrypted successfully. The plaintext and key never left this browser.", "success");
+    const weak = $("encryptKey").value.length < 10 && !generatedKeyLike($("encryptKey").value);
+    setStatus(weak ? "Encrypted, but this short key is vulnerable to offline guessing." : "Encrypted successfully. The plaintext and key never left this browser.", weak ? "error" : "success");
   } catch (error) {
     setStatus(error.message || "Encryption failed.", "error");
   } finally {
@@ -280,8 +517,55 @@ $("decryptButton").addEventListener("click", async () => {
   }
 });
 
+$("transformButton").addEventListener("click", async () => {
+  const button = $("transformButton");
+  setBusy(button, true, "Optimizing…");
+  setStatus("Testing reversible transform recipes and choosing the shortest key…");
+  try {
+    const original = $("transformOriginal").value;
+    const cover = $("transformCover").value;
+    const result = await createTransform(original, cover);
+    $("transformKeyOutput").value = result.key;
+    $("transformMethod").textContent = result.method;
+    $("transformKeyChars").textContent = String(result.keyChars);
+    const originalChars = Math.max(1, original.length);
+    $("transformEfficiency").textContent = Math.round((result.keyChars / originalChars) * 100) + "%";
+    $("transformResult").classList.remove("hidden");
+    setStatus("Transform created. The visible text stays exactly as you wrote it.", "success");
+  } catch (error) {
+    $("transformResult").classList.add("hidden");
+    setStatus(error.message || "Transform creation failed.", "error");
+  } finally {
+    setBusy(button, false);
+  }
+});
+
+$("restoreTransformButton").addEventListener("click", async () => {
+  const button = $("restoreTransformButton");
+  setBusy(button, true, "Restoring…");
+  setStatus("Applying the BT1 recipe to the visible text…");
+  try {
+    const result = await restoreTransform($("restoreCover").value, $("restoreKey").value);
+    $("restoreOutput").value = result;
+    $("restoreTransformResult").classList.remove("hidden");
+    setStatus("Original message restored and verified.", "success");
+  } catch (error) {
+    $("restoreTransformResult").classList.add("hidden");
+    $("restoreOutput").value = "";
+    setStatus(error.message || "Transform restore failed.", "error");
+  } finally {
+    setBusy(button, false);
+  }
+});
+
 $("copyCipher").addEventListener("click", () => copyText($("cipherOutput").value, "Bytarith string copied."));
 $("copyPlain").addEventListener("click", () => copyText($("plainOutput").value, "Decrypted message copied."));
+$("copyTransformKey").addEventListener("click", () => copyText($("transformKeyOutput").value, "BT1 transform key copied."));
+$("copyTransformPair").addEventListener("click", () => {
+  const pair = $("transformCover").value + "\n\nBT1 Key: " + $("transformKeyOutput").value;
+  copyText(pair, "Visible text and BT1 key copied.");
+});
+$("copyRestoreOutput").addEventListener("click", () => copyText($("restoreOutput").value, "Original message copied."));
 
-updateByteCount();
+updateByteCounts();
 updateKeyStrength();
