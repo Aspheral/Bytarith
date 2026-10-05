@@ -1,0 +1,12 @@
+{
+  "name": "Bytarith",
+  "short_name": "Bytarith",
+  "description": "Private short-key text encryption in your browser.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#08080a",
+  "theme_color": "#09090b",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
