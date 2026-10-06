@@ -1,7 +1,8 @@
 "use strict";
 
 const PREFIX = "BY1.";
-const TRANSFORM_PREFIX = "BT1.";\nconst FAST_TRANSFORM_PREFIX = "BT2.";
+const TRANSFORM_PREFIX = "BT1.";
+const FAST_TRANSFORM_PREFIX = "BT2.";
 const ITERATIONS = 600000;
 const SALT_BYTES = 16;
 const IV_BYTES = 12;
@@ -11,7 +12,8 @@ const MAX_TRANSFORM_BYTES = 1000000;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const protocolBytes = encoder.encode("Bytarith/BY1/AES-256-GCM/PBKDF2-SHA256");
-const transformMaskLabel = encoder.encode("Bytarith/BT1/mask");\nconst fastTransformMaskLabel = encoder.encode("Bytarith/BT2/mask");
+const transformMaskLabel = encoder.encode("Bytarith/BT1/mask");
+const fastTransformMaskLabel = encoder.encode("Bytarith/BT2/mask");
 
 const $ = (id) => document.getElementById(id);
 
