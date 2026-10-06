@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Bytarith — Encrypt, Decrypt & Transform Text</title>
-  <meta name="description" content="Bytarith is a private browser tool for encryption, decryption, and reversible text transforms. Create secure BY1 ciphertext or custom visible text with compact BT1 transform keys.">
+  <meta name="description" content="Bytarith is a private browser tool for encryption, decryption, and reversible text transforms. Create secure BY1 ciphertext or custom visible text with compact BT2 transform keys.">
   <meta name="keywords" content="Bytarith, Bytarith cipher, Bytarith transform, Bytarith encoder, Bytarith decoder, text encryption, text transform, short key encryption, browser encryption">
   <meta name="theme-color" content="#09090b">
   <meta property="og:title" content="Bytarith — Secure Short-Key Text Encryption">
@@ -43,7 +43,7 @@
           <span> AES-256-GCM</span>
           <span> PBKDF2-SHA-256</span>
           <span> Zero network calls</span>
-          <span> BT1 Transform</span>
+          <span> BT2 Transform</span>
         </div>
       </div>
 
@@ -146,11 +146,11 @@
       <div class="panel" id="transformPanel" role="tabpanel" aria-labelledby="transformTab" hidden>
         <div class="transform-intro">
           <div>
-            <p class="card-kicker">BT1 Transform</p>
+            <p class="card-kicker">BT2 Transform</p>
             <h2>Choose what people see.</h2>
             <p>Write the real message and the exact visible text you want to share. Bytarith tests multiple reversible encodings and keeps the shortest transform key.</p>
           </div>
-          <div class="transform-warning">Transform is reversible encoding, not encryption. The visible text and BT1 key together recover the original.</div>
+          <div class="transform-warning">Transform is reversible encoding, not encryption. The visible text and transform key together recover the original.</div>
         </div>
 
         <div class="sub-tabs" role="tablist" aria-label="Transform action">
@@ -188,7 +188,7 @@
               <div><b id="transformEfficiency">0%</b><span>Key vs original</span></div>
             </div>
             <div class="field-head">
-              <label for="transformKeyOutput">BT1 transform key</label>
+              <label for="transformKeyOutput">BT2 transform key</label>
               <span>Requires the exact visible text</span>
             </div>
             <textarea id="transformKeyOutput" rows="5" readonly spellcheck="false"></textarea>
@@ -210,10 +210,10 @@
             </div>
             <div class="field-group">
               <div class="field-head">
-                <label for="restoreKey">BT1 transform key</label>
-                <span>BT1 format</span>
+                <label for="restoreKey">BT2 transform key</label>
+                <span>BT1 / BT2 format</span>
               </div>
-              <textarea id="restoreKey" rows="6" spellcheck="false" placeholder="BT1.…"></textarea>
+              <textarea id="restoreKey" rows="6" spellcheck="false" placeholder="BT2.… or legacy BT1.…"></textarea>
             </div>
           </div>
 
@@ -277,7 +277,7 @@
         <p><strong>BY1</strong> stores the KDF work factor, random salt, random IV, and authenticated ciphertext. <strong>BT1</strong> stores the smallest reversible recipe Bytarith finds for mapping your chosen visible text back to the original.</p>
       </div>
       <div class="format-code" aria-label="Bytarith BY1 format">
-        <div><span class="format-prefix">BY1.</span><span class="format-data">Ab3k9xF8pQ2n…</span><br><span class="format-prefix">BT1.</span><span class="format-data">Aq7mP2dK…</span></div>
+        <div><span class="format-prefix">BY1.</span><span class="format-data">Ab3k9xF8pQ2n…</span><br><span class="format-prefix">BT2.</span><span class="format-data">Aq7mP2dK…</span></div>
         <div class="format-labels">
           <span>version</span>
           <span>encrypted payload</span>
@@ -297,7 +297,7 @@
   <footer>
     <div class="brand footer-brand"><span class="brand-mark">B</span><span>Bytarith</span></div>
     <p>Private short-key encryption for text. Built by Aspheral.</p>
-    <p class="footer-small">BY1 · AES-256-GCM · BT1 Transform</p>
+    <p class="footer-small">BY1 · AES-256-GCM · BT2 Transform</p>
   </footer>
 </body>
 </html>

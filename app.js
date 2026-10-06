@@ -1,7 +1,7 @@
 "use strict";
 
 const PREFIX = "BY1.";
-const TRANSFORM_PREFIX = "BT1.";
+const TRANSFORM_PREFIX = "BT1.";\nconst FAST_TRANSFORM_PREFIX = "BT2.";
 const ITERATIONS = 600000;
 const SALT_BYTES = 16;
 const IV_BYTES = 12;
@@ -11,7 +11,7 @@ const MAX_TRANSFORM_BYTES = 1000000;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const protocolBytes = encoder.encode("Bytarith/BY1/AES-256-GCM/PBKDF2-SHA256");
-const transformMaskLabel = encoder.encode("Bytarith/BT1/mask");
+const transformMaskLabel = encoder.encode("Bytarith/BT1/mask");\nconst fastTransformMaskLabel = encoder.encode("Bytarith/BT2/mask");
 
 const $ = (id) => document.getElementById(id);
 
@@ -98,9 +98,12 @@ function readVarint(bytes, state) {
   throw new Error("The BT1 key contains an invalid integer.");
 }
 
+async function sha256(bytes) {
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+}
+
 async function digest16(bytes) {
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-  return digest.slice(0, 2);
+  return (await sha256(bytes)).slice(0, 2);
 }
 
 async function xorWithCoverStream(bytes, coverBytes) {
@@ -281,11 +284,34 @@ function commonSuffixLength(a, b, prefix) {
   return i;
 }
 
+function varintLength(value) {
+  let length = 1;
+  while (value >= 128) {
+    value = Math.floor(value / 128);
+    length++;
+  }
+  return length;
+}
+
+function writeVarint(target, offset, value) {
+  do {
+    let byte = value & 0x7f;
+    value = Math.floor(value / 128);
+    if (value) byte |= 0x80;
+    target[offset++] = byte;
+  } while (value);
+  return offset;
+}
+
 function buildPatchPayload(original, cover) {
   const prefix = commonPrefixLength(original, cover);
   const suffix = commonSuffixLength(original, cover, prefix);
   const middle = original.slice(prefix, original.length - suffix);
-  return concatBytes(encodeVarint(prefix), encodeVarint(suffix), middle);
+  const out = new Uint8Array(varintLength(prefix) + varintLength(suffix) + middle.length);
+  let offset = writeVarint(out, 0, prefix);
+  offset = writeVarint(out, offset, suffix);
+  out.set(middle, offset);
+  return out;
 }
 
 function restorePatchPayload(payload, cover) {
@@ -299,17 +325,30 @@ function restorePatchPayload(payload, cover) {
 
 function buildSparsePayload(original, cover) {
   if (original.length !== cover.length) return null;
-  const parts = [];
+
   let changes = 0;
-  for (let i = 0; i < original.length; i++) if (original[i] !== cover[i]) changes++;
-  parts.push(encodeVarint(changes));
+  let payloadBytes = 0;
   let previous = 0;
+
   for (let i = 0; i < original.length; i++) {
     if (original[i] === cover[i]) continue;
-    parts.push(encodeVarint(i - previous), new Uint8Array([original[i]]));
+    changes++;
+    payloadBytes += varintLength(i - previous) + 1;
     previous = i;
   }
-  return concatBytes.apply(null, parts);
+
+  const out = new Uint8Array(varintLength(changes) + payloadBytes);
+  let offset = writeVarint(out, 0, changes);
+  previous = 0;
+
+  for (let i = 0; i < original.length; i++) {
+    if (original[i] === cover[i]) continue;
+    offset = writeVarint(out, offset, i - previous);
+    out[offset++] = original[i];
+    previous = i;
+  }
+
+  return out;
 }
 
 function restoreSparsePayload(payload, cover) {
@@ -332,80 +371,162 @@ async function makeTransformCandidate(codec, method, payload, coverBytes, coverH
   return { codec, method, binary, key: TRANSFORM_PREFIX + bytesToBase64Url(binary) };
 }
 
+function rotateLeft32(value, bits) {
+  return ((value << bits) | (value >>> (32 - bits))) >>> 0;
+}
+
+function xorWithFastCoverStream(bytes, seedBytes) {
+  const view = new DataView(seedBytes.buffer, seedBytes.byteOffset, seedBytes.byteLength);
+  let a = view.getUint32(0, false) || 0x9e3779b9;
+  let b = view.getUint32(4, false) || 0x243f6a88;
+  let c = view.getUint32(8, false) || 0xb7e15162;
+  let d = view.getUint32(12, false) || 0xdeadbeef;
+
+  const out = new Uint8Array(bytes.length);
+  let word = 0;
+  let available = 0;
+
+  for (let i = 0; i < bytes.length; i++) {
+    if (!available) {
+      const result = Math.imul(rotateLeft32(Math.imul(b, 5) >>> 0, 7), 9) >>> 0;
+      const t = (b << 9) >>> 0;
+      c ^= a;
+      d ^= b;
+      b ^= c;
+      a ^= d;
+      c ^= t;
+      d = rotateLeft32(d, 11);
+      word = result;
+      available = 4;
+    }
+
+    out[i] = bytes[i] ^ (word & 0xff);
+    word >>>= 8;
+    available--;
+  }
+
+  return out;
+}
+
+async function makeFastTransformKey(codec, method, payload, coverHash, originalHash, seedBytes) {
+  const masked = xorWithFastCoverStream(payload, seedBytes);
+  const binary = concatBytes(new Uint8Array([codec]), coverHash, originalHash, masked);
+  return { codec, method, binary, key: FAST_TRANSFORM_PREFIX + bytesToBase64Url(binary) };
+}
+
 async function createTransform(originalText, coverText) {
   const original = encoder.encode(originalText);
   const cover = encoder.encode(coverText);
+
   if (!original.length) throw new Error("Enter an original message.");
   if (!cover.length) throw new Error("Enter the visible text you want people to see.");
   if (original.length > MAX_TRANSFORM_BYTES || cover.length > MAX_TRANSFORM_BYTES) {
     throw new Error("Transform currently supports up to 1 MB per text field.");
   }
 
-  const coverHash = await digest16(cover);
-  const originalHash = await digest16(original);
-  const candidates = [];
+  const [coverDigest, originalDigest, seedBytes] = await Promise.all([
+    sha256(cover),
+    sha256(original),
+    sha256(concatBytes(fastTransformMaskLabel, cover))
+  ]);
 
-  candidates.push(await makeTransformCandidate(0, "Masked raw", original, cover, coverHash, originalHash));
-
+  const coverHash = coverDigest.slice(0, 2);
+  const originalHash = originalDigest.slice(0, 2);
   const patchPayload = buildPatchPayload(original, cover);
-  candidates.push(await makeTransformCandidate(1, "Prefix/suffix patch", patchPayload, cover, coverHash, originalHash));
-
   const sparsePayload = buildSparsePayload(original, cover);
+
+  const candidates = [
+    { codec: 0, method: "Masked raw", payload: original },
+    { codec: 1, method: "Prefix/suffix patch", payload: patchPayload }
+  ];
+
   if (sparsePayload) {
-    candidates.push(await makeTransformCandidate(2, "Sparse byte edits", sparsePayload, cover, coverHash, originalHash));
+    candidates.push({ codec: 2, method: "Sparse byte edits", payload: sparsePayload });
   }
 
-  const compressedOriginal = await compressDeflate(original);
+  const [compressedOriginal, compressedPatch] = await Promise.all([
+    compressDeflate(original),
+    compressDeflate(patchPayload)
+  ]);
+
   if (compressedOriginal) {
-    candidates.push(await makeTransformCandidate(3, "Deflate", compressedOriginal, cover, coverHash, originalHash));
+    candidates.push({ codec: 3, method: "Deflate", payload: compressedOriginal });
   }
 
-  const compressedPatch = await compressDeflate(patchPayload);
   if (compressedPatch) {
-    candidates.push(await makeTransformCandidate(4, "Compressed patch", compressedPatch, cover, coverHash, originalHash));
+    candidates.push({ codec: 4, method: "Compressed patch", payload: compressedPatch });
   }
 
-  candidates.sort((a, b) => a.key.length - b.key.length || a.binary.length - b.binary.length);
+  candidates.sort((a, b) => a.payload.length - b.payload.length || a.codec - b.codec);
   const best = candidates[0];
+  const built = await makeFastTransformKey(
+    best.codec,
+    best.method,
+    best.payload,
+    coverHash,
+    originalHash,
+    seedBytes
+  );
+
   return {
-    key: best.key,
-    method: best.method,
+    key: built.key,
+    method: built.method,
     originalBytes: original.length,
-    keyChars: best.key.length
+    keyChars: built.key.length
   };
 }
 
 async function restoreTransform(coverText, serialized) {
   const input = serialized.trim();
-  if (!input.startsWith(TRANSFORM_PREFIX)) throw new Error("This is not a BT1 transform key.");
+  const legacy = input.startsWith(TRANSFORM_PREFIX);
+  const fast = input.startsWith(FAST_TRANSFORM_PREFIX);
+
+  if (!legacy && !fast) throw new Error("This is not a BT1 or BT2 transform key.");
+
   const cover = encoder.encode(coverText);
   if (!cover.length) throw new Error("Enter the exact visible text used to create the transform.");
 
-  const binary = base64UrlToBytes(input.slice(TRANSFORM_PREFIX.length), "BT1 payload");
-  if (binary.length < 5) throw new Error("The BT1 key is incomplete.");
+  const prefix = fast ? FAST_TRANSFORM_PREFIX : TRANSFORM_PREFIX;
+  const binary = base64UrlToBytes(input.slice(prefix.length), fast ? "BT2 payload" : "BT1 payload");
+  if (binary.length < 5) throw new Error("The transform key is incomplete.");
+
   const codec = binary[0];
   const expectedCoverHash = binary.slice(1, 3);
   const expectedOriginalHash = binary.slice(3, 5);
-  const actualCoverHash = await digest16(cover);
-  if (!bytesEqual(expectedCoverHash, actualCoverHash)) throw new Error("Visible text mismatch. BT1 keys are tied to the exact visible text.");
 
-  const payload = await xorWithCoverStream(binary.slice(5), cover);
+  const coverDigest = await sha256(cover);
+  const actualCoverHash = coverDigest.slice(0, 2);
+  if (!bytesEqual(expectedCoverHash, actualCoverHash)) {
+    throw new Error("Visible text mismatch. Transform keys are tied to the exact visible text.");
+  }
+
+  let payload;
+  if (fast) {
+    const seedBytes = await sha256(concatBytes(fastTransformMaskLabel, cover));
+    payload = xorWithFastCoverStream(binary.slice(5), seedBytes);
+  } else {
+    payload = await xorWithCoverStream(binary.slice(5), cover);
+  }
+
   let original;
   if (codec === 0) original = payload;
   else if (codec === 1) original = restorePatchPayload(payload, cover);
   else if (codec === 2) original = restoreSparsePayload(payload, cover);
   else if (codec === 3) original = await decompressDeflate(payload);
   else if (codec === 4) original = restorePatchPayload(await decompressDeflate(payload), cover);
-  else throw new Error("Unsupported BT1 transform method.");
+  else throw new Error("Unsupported transform method.");
 
-  if (original.length > MAX_TRANSFORM_BYTES) throw new Error("The restored message exceeds the BT1 size limit.");
-  const actualOriginalHash = await digest16(original);
-  if (!bytesEqual(expectedOriginalHash, actualOriginalHash)) throw new Error("The BT1 key is damaged or does not match this visible text.");
+  if (original.length > MAX_TRANSFORM_BYTES) throw new Error("The restored message exceeds the transform size limit.");
+
+  const actualOriginalHash = (await sha256(original)).slice(0, 2);
+  if (!bytesEqual(expectedOriginalHash, actualOriginalHash)) {
+    throw new Error("The transform key is damaged or does not match this visible text.");
+  }
 
   try {
     return decoder.decode(original);
   } catch {
-    throw new Error("The restored BT1 data is not valid UTF-8 text.");
+    throw new Error("The restored transform data is not valid UTF-8 text.");
   }
 }
 

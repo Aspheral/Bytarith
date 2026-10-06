@@ -8,7 +8,7 @@
 - Cryptographically random 80-bit generated keys
 - Portable `BY1.` ciphertext format
 - Plaintext and keys stay in the browser
-- BT1 Transform mode with shortest-of-several reversible encoding strategies
+- BT2 Transform mode with shortest-of-several reversible encoding strategies
 - No analytics or network API calls from the app
 
 ## BY1 format
@@ -21,11 +21,11 @@ BY1.<base64url payload>
 
 The binary payload contains the PBKDF2 iteration count, salt, IV, and AES-GCM ciphertext/tag. The secret key is never stored in the BY1 string.
 
-## BT1 Transform
+## BT2 Transform
 
 Transform mode lets you choose the exact visible text and generates a `BT1.` key that reconstructs the original message when paired with that visible text.
 
-BT1 tries multiple local representations, including raw masking, prefix/suffix patches, sparse byte edits, Deflate compression, and compressed patches, then keeps the shortest result. BT1 is reversible encoding, not encryption; possession of both the visible text and transform key is enough to restore the original.
+BT2 tries multiple local representations, including raw masking, prefix/suffix patches, sparse byte edits, Deflate compression, and compressed patches, then keeps the shortest result. BT2 is reversible encoding, not encryption; possession of both the visible text and transform key is enough to restore the original.
 
 Encryption mode also accepts keys as short as two characters for experimentation, but short human-chosen keys are explicitly treated as weak and are vulnerable to offline guessing.
 
@@ -36,3 +36,4 @@ Bytarith uses established browser cryptographic primitives, but it is still a yo
 ## Live
 
 https://bytarith.vercel.app
+\n\nLegacy `BT1.` transform keys remain restorable for backward compatibility. New transforms use the faster `BT2.` format.\n
